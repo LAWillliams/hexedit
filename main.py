@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import binascii
+import struct
 import re
 
 class HexEditor:
@@ -23,23 +24,13 @@ class HexEditor:
         self.search_button = tk.Button(root, text="Search", command=self.search_text)
         self.search_button.pack(side=tk.LEFT, padx=5, pady=5)
         
-        self.prev_button = tk.Button(root, text="Previous", command=self.prev_match)
-        self.prev_button.pack(side=tk.LEFT, padx=5, pady=5)
-        
-        self.next_button = tk.Button(root, text="Next", command=self.next_match)
-        self.next_button.pack(side=tk.LEFT, padx=5, pady=5)
+        self.edit_float_button = tk.Button(root, text="Edit Float", command=self.edit_float)
+        self.edit_float_button.pack(side=tk.LEFT, padx=5, pady=5)
         
         self.file_path = None
-        self.matches = []
-        self.current_match_index = -1
+        self.file_data = None
     
     def extract_strings(self, data, min_length=4):
-        """
-        Extract readable strings from binary data.
-        :param data: Binary data from the file.
-        :param min_length: Minimum length of readable strings.
-        :return: Extracted strings joined into a readable format.
-        """
         text_strings = re.findall(b'[ -~]{%d,}' % min_length, data)  # ASCII printable characters
         return '\n'.join([s.decode('utf-8', errors='ignore') for s in text_strings])
     
@@ -50,8 +41,8 @@ class HexEditor:
         
         try:
             with open(self.file_path, "rb") as file:
-                data = file.read()
-                extracted_text = self.extract_strings(data)
+                self.file_data = bytearray(file.read())
+                extracted_text = self.extract_strings(self.file_data)
                 self.text_area.delete(1.0, tk.END)
                 self.text_area.insert(tk.END, extracted_text)
         except Exception as e:
@@ -63,11 +54,8 @@ class HexEditor:
             return
         
         try:
-            extracted_text = self.text_area.get(1.0, tk.END).strip()
-            binary_data = binascii.unhexlify(extracted_text.replace("\n", ""))
-            
             with open(self.file_path, "wb") as file:
-                file.write(binary_data)
+                file.write(self.file_data)
             messagebox.showinfo("Success", "File saved successfully")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save file: {e}")
@@ -79,7 +67,6 @@ class HexEditor:
             return
         
         self.text_area.tag_remove("highlight", "1.0", tk.END)
-        self.matches = []
         start_pos = "1.0"
         while True:
             start_pos = self.text_area.search(search_term, start_pos, stopindex=tk.END)
@@ -87,27 +74,34 @@ class HexEditor:
                 break
             end_pos = f"{start_pos}+{len(search_term)}c"
             self.text_area.tag_add("highlight", start_pos, end_pos)
-            self.matches.append(start_pos)
             start_pos = end_pos
         
         self.text_area.tag_config("highlight", background="yellow")
-        self.current_match_index = 0 if self.matches else -1
-        self.jump_to_match()
     
-    def jump_to_match(self):
-        if self.matches and 0 <= self.current_match_index < len(self.matches):
-            self.text_area.mark_set("insert", self.matches[self.current_match_index])
-            self.text_area.see(self.matches[self.current_match_index])
-    
-    def prev_match(self):
-        if self.matches and self.current_match_index > 0:
-            self.current_match_index -= 1
-            self.jump_to_match()
-    
-    def next_match(self):
-        if self.matches and self.current_match_index < len(self.matches) - 1:
-            self.current_match_index += 1
-            self.jump_to_match()
+    def edit_float(self):
+        if not self.file_data:
+            messagebox.showerror("Error", "No file loaded")
+            return
+        
+        try:
+            float_value = float(self.search_entry.get())
+            float_bytes = struct.pack('<f', float_value)  # Convert float to IEEE-754 format
+            
+            for i in range(len(self.file_data) - 4):
+                chunk = self.file_data[i:i+4]
+                if len(chunk) == 4:
+                    try:
+                        extracted_float = struct.unpack('<f', chunk)[0]
+                        if abs(extracted_float - float_value) < 0.001:  # Tolerance check
+                            self.file_data[i:i+4] = float_bytes
+                            messagebox.showinfo("Success", f"Modified float at offset {i}")
+                            return
+                    except struct.error:
+                        continue
+            
+            messagebox.showerror("Error", "Float value not found in file")
+        except ValueError:
+            messagebox.showerror("Error", "Invalid float input")
 
 if __name__ == "__main__":
     root = tk.Tk()
